@@ -9,8 +9,8 @@ def print_args(args):
     print()
 
     print("\033[1m" + "Model Parameters" + "\033[0m")
-    print(f'  {"Top n:":<20}{args.top_n:<20}{"C Out:":<20}{args.c_out:<20}')
-    print(f'  {"Patch_size:":<20}{args.patch_size:<20}{"Stride:":<20}{args.stride:<20}')
+    print(f'  {"Top n:":<20}{args.top_n:<20}')
+    print(f'  {"Patch_size:":<20}{args.patch_size:<20}')
     print()
 
     print("\033[1m" + "Run Parameters" + "\033[0m")

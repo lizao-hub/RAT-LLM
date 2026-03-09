@@ -23,6 +23,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--text', type=str, default='Zero-shot soft sensing')
     parser.add_argument('--max_length', type=int, default=50)
+    parser.add_argument('--hid_m', type=int, default=768)
+    parser.add_argument('--m', type=int, default=3)
 
     parser.add_argument('--target', type=str, default='OT', help='target feature in S or MS task')
     parser.add_argument('--checkpoints', type=str, default='./checkpoints/', help='location of model checkpoints')
@@ -33,33 +35,16 @@ if __name__ == '__main__':
     parser.add_argument('--pred_len', type=int, default=48, help='prediction sequence length')
 
     # model define
+    parser.add_argument('--gpt_layers', type=int, default=6, help='number of hidden layers in gpt')
     parser.add_argument('--patch_size', type=int, default=10)
-    parser.add_argument('--patch_size_list', type=int, nargs='+', default=[16, 8], help='list of patch size')
-    parser.add_argument('--stride', type=int, default=10)
-    parser.add_argument('--stride_ret', type=int, default=32)
+    parser.add_argument('--rel_stride', type=int, default=32)
     parser.add_argument('--top_k', type=int, default=2, help='for TimesBlock')
-    parser.add_argument('--num_kernels', type=int, default=6, help='for Inception')
     parser.add_argument('--enc_in', type=int, default=7, help='encoder input size')
-    parser.add_argument('--dec_in', type=int, default=7, help='decoder input size')
-    parser.add_argument('--c_out', type=int, default=7, help='output size')
     parser.add_argument('--d_model', type=int, default=768, help='dimension of model')
     parser.add_argument('--n_heads', type=int, default=6, help='num of heads')
-    parser.add_argument('--e_layers', type=int, default=2, help='num of encoder layers')
-    parser.add_argument('--d_layers', type=int, default=2, help='num of decoder layers')
-    parser.add_argument('--d_ff', type=int, default=256, help='dimension of fcn')
-    parser.add_argument('--d_hid', type=int, default=128, help='dimension of hid')
-    parser.add_argument('--d_cib', type=int, default=32, help='dimension of Retriever')
     parser.add_argument('--dropout', type=float, default=0.3, help='dropout')
-    parser.add_argument('--activation', type=str, default='gelu', help='activation')
-    parser.add_argument('--factor', type=int, default=1, help='attn factor')
-    parser.add_argument('--embed', type=str, default='timeF',
-                        help='time features encoding, options:[timeF, fixed, learned]')
-    parser.add_argument('--freq', type=str, default='h',
-                        help='freq for time features encoding, options:[s:secondly, t:minutely, h:hourly, d:daily, b:business days, w:weekly, m:monthly], you can also use more detailed freq like 15min or 3h')
-    parser.add_argument('--down_sampling_window', type=int, default=1, help='down sampling window size')
-    parser.add_argument('--down_sampling_layers', type=int, default=0, help='num of down sampling layers')
-
-    # rag
+    parser.add_argument('--ratio', type=float, default=0.5, help='ratio')
+    parser.add_argument('--metric', type=str, default='cosine', help='metric')
     parser.add_argument('--top_n', type=int, default=4, help='top_n')
     parser.add_argument('--temperature', type=float, default=1)
 
@@ -77,8 +62,7 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='optimizer learning rate')
     parser.add_argument('--des', type=str, default='test', help='exp description')
     parser.add_argument('--use_amp', action='store_true', help='use automatic mixed precision training', default=False)
-    parser.add_argument('--similarity_loss', type=str, default='kl', help='distillation loss function')
-    parser.add_argument('--task_loss', type=str, default='mse', help='task loss function')
+
 
     # GPU
     parser.add_argument('--use_gpu', type=bool, default=True, help='use gpu')
@@ -90,14 +74,11 @@ if __name__ == '__main__':
     parser.add_argument('--tmax', type=int, default=10)
     parser.add_argument('--cos', type=int, default=1)
 
-    # loss weight
+    # loss
     parser.add_argument('--task_w', type=float, default=1.0)
     parser.add_argument('--similarity_w', type=float, default=0.5)
-
-    # gpt
-    parser.add_argument('--gpt_layers', type=int, default=3, help='number of hidden layers in gpt')
-    parser.add_argument('--word_embedding_path', type=str, default="wte_pca_500.pt")
-    parser.add_argument('--last_prompt_token_path', type=str, default="last_prompt_token.pt")
+    parser.add_argument('--similarity_loss', type=str, default='kl', help='distillation loss function')
+    parser.add_argument('--task_loss', type=str, default='mse', help='task loss function')
 
     args = parser.parse_args()
 
@@ -132,13 +113,11 @@ if __name__ == '__main__':
     if args.is_training:
         for ii in range(args.itr):
             # setting record of experiments
-            setting = '{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}'.format(
+            setting = '{}_{}_{}_{}_{}_{}_{}_{}_{}'.format(
                 args.model_id,
                 args.model,
                 args.seq_len,
                 args.patch_size,
-                args.stride,
-                args.d_ff,
                 args.gpt_layers,
                 args.top_n,
                 args.temperature,
@@ -155,13 +134,11 @@ if __name__ == '__main__':
             torch.cuda.empty_cache()
     else:
         ii = 0
-        setting = '{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}'.format(
+        setting = '{}_{}_{}_{}_{}_{}_{}_{}_{}'.format(
             args.model_id,
             args.model,
             args.seq_len,
             args.patch_size,
-            args.stride,
-            args.d_ff,
             args.gpt_layers,
             args.top_n,
             args.temperature,

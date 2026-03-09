@@ -17,11 +17,9 @@ python run.py \
     --train_epochs 200 \
     --tmax 20 \
     --d_model 768 \
-    --d_ff 768 \
     --n_heads 6 \
     --enc_in 15 \
     --patch_size 6 \
-    --stride 6 \
     --gpt_layers 6 \
     --model $model \
     --patience 10 \
@@ -29,4 +27,4 @@ python run.py \
     --target 5 \
     --use_multi_gpu \
     --device 0,1,2,3 \
-    --stride_ret 6
+    --rel_stride 6
