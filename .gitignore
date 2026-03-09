@@ -1,0 +1,8 @@
+/datasets/
+/checkpoints/
+/models/gpt2/
+.idea/
+__pycache__/
+*.pyc
+venv/
+.env
