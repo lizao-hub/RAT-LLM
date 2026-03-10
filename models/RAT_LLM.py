@@ -13,7 +13,7 @@ class Model(nn.Module):
         self.top_n = configs.top_n
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-        # 1. 加载 GPT2 与 PEFT
+        # 1. Load GPT2 and apply PEFT (LoRA)
         self.gpt2 = AccustumGPT2Model.from_pretrained('./models/gpt2', output_attentions=True,
                                                       output_hidden_states=True)
         self.gpt2.h = self.gpt2.h[:configs.gpt_layers]
@@ -36,31 +36,32 @@ class Model(nn.Module):
 
     def forward(self, x, text_emb):
         """
-        前向传播，使用新的MTRM整合所有预处理步骤
+        Forward pass using MTRM to integrate all preprocessing steps.
 
         Args:
-            x: 输入序列 [B, L, C]
-            raw_text_emb: 原始文本嵌入 [1, max_text_len, D]
+            x: Input sequence [B, L, C]
+            text_emb: Text embeddings [1, max_text_len, D]
 
         Returns:
-            dict: 包含预测输出和相似度分数的字典
+            dict: Dictionary containing prediction outputs and similarity scores
         """
         B, _, _ = x.shape
-
-        # 1. 检索增强路径
+        # 1. Retrieval-augmented path
         retriever_outputs = self.retriever(x)
+        print(retriever_outputs[0].device, retriever_outputs[0].sum().item())
 
-        # 2. 使用新的MTRM处理所有后续步骤，获取准备输入GPT2的tokens
+        # 2. Use MTRM to process all subsequent steps and get tokens ready for GPT2
         tokens = self.mtrm(x, text_emb, retriever_outputs)
 
-        # 3. 传递给GPT2
+        # 3. Pass to GPT2
         outputs, att = self.gpt2(inputs_embeds=tokens, output_attentions=True)
 
-        # 4. 预测头
+        # 4. Prediction head
         all_outputs = self.pred_head(self.act(outputs[:, -1:, :])).reshape(B, -1)
-        # 5. 获取相似度分数用于返回
-        # retriever_outputs格式: (top_n_similarity, top_n_candidate, top_n_similarity_raw, top_n_candidate_raw)
-        # 在测试模式下，top_n_similarity可能为None，使用top_n_similarity_raw
+
+        # 5. Get similarity scores for return
+        # retriever_outputs format: (top_n_similarity, top_n_candidate, top_n_similarity_raw, top_n_candidate_raw)
+        # In test mode, top_n_similarity may be None, use top_n_similarity_raw instead
         top_n_similarity = retriever_outputs[0] if retriever_outputs[0] is not None else retriever_outputs[2]
 
         return {

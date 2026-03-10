@@ -2,7 +2,6 @@ import os
 import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
-
 class Dataset_zero_shot(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  data_path='ETTh1.csv', target='OT'):  # 添加 seed 参数

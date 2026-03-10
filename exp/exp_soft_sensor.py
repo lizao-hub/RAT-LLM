@@ -72,6 +72,20 @@ class Exp_Soft_Sensor(Exp_Basic):
 
     def _get_data(self, flag, vali_test=False):
         data_set, data_loader = data_provider(self.args, flag, vali_test)
+        first_sample = data_set[0]
+
+        # 3. 解析并打印
+        seq_x, seq_y, seq_x_mark, seq_y_mark = first_sample
+
+        print("--- 第一个样本详情 ---")
+        print(f"输入序列 (seq_x) 形状: {seq_x.shape}")
+        print(f"目标值 (seq_y) 形状: {seq_y.shape}")
+        print(f"seq_x 内容 (前5行):\n{seq_x[:5]}")
+        print(f"seq_y 内容: {seq_y}")
+        print(f"数据集总样本数: {len(data_set)}")
+
+
+
         return data_set, data_loader
 
     def _select_optimizer(self):
@@ -126,6 +140,7 @@ class Exp_Soft_Sensor(Exp_Basic):
             epoch_time = time.time()
 
             for i, (batch_x, batch_y, _, _) in enumerate(train_loader):
+                # print(batch_x)
 
                 iter_count += 1
                 model_optim.zero_grad()
