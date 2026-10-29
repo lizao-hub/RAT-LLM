@@ -3,12 +3,13 @@ from torch.utils.data import DataLoader, ConcatDataset
 
 data_dict = {
     'zero_shot': Dataset_zero_shot,
+    # 'hlt': Dataset_hlt,
 }
 
 
 def data_provider(args, flag, vali=False):
     Data = data_dict[args.data]
-    if flag == 'test':
+    if flag in ('test', 'unknown'):
         shuffle_flag = False
         drop_last = True
         batch_size = 1
@@ -19,6 +20,24 @@ def data_provider(args, flag, vali=False):
 
     train_data_path = args.train_data_path
     if flag == 'train' or flag == 'val':
+        if getattr(Data, 'MULTI_FILE', False):
+            # 数据集自己管理多个文件（如 Dataset_hlt 的 state1~3），不要再按 data_path 循环
+            datasets = Data(
+                root_path=args.root_path,
+                flag=flag,
+                size=[args.seq_len, args.label_len, args.pred_len],
+                data_path=None,
+                target=args.target,
+            )
+            print(flag, len(datasets))
+            data_loader = DataLoader(
+                datasets,
+                batch_size=batch_size,
+                shuffle=shuffle_flag,
+                num_workers=args.num_workers,
+                drop_last=drop_last)
+            return datasets, data_loader
+
         datasets = []
         for data_path in train_data_path:
             data_set = Data(
@@ -40,7 +59,7 @@ def data_provider(args, flag, vali=False):
             drop_last=drop_last)
         return datasets, data_loader
 
-    else: #flag == 'test'
+    else:  # flag == 'test'（已知工况测试）或 'unknown'（未知工况测试）
         data_set = Data(
             root_path=args.root_path,
             flag=flag,

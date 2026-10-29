@@ -5,8 +5,19 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from datetime import datetime
-from distutils.util import strtobool
 import pandas as pd
+
+
+def strtobool(value):
+    """Python 3.12 移除了 ``distutils``，这里保留同名小工具。"""
+    if isinstance(value, bool):
+        return int(value)
+    value = str(value).strip().lower()
+    if value in ("y", "yes", "t", "true", "on", "1"):
+        return 1
+    if value in ("n", "no", "f", "false", "off", "0"):
+        return 0
+    raise ValueError(f"invalid truth value {value!r}")
 
 plt.switch_backend('agg')
 
@@ -35,7 +46,7 @@ class EarlyStopping:
         self.counter = 0
         self.best_score = None
         self.early_stop = False
-        self.val_loss_min = np.Inf
+        self.val_loss_min = np.inf
         self.delta = delta
 
     def __call__(self, val_loss, model, path):

@@ -1,18 +1,35 @@
+"""软测量训练 / 验证 / 测试流程（模型无关）。
+
+模型由 ``run.py --model`` 指定：``models/<model>.py`` 中需要提供 ``Model`` 类，
+构造签名为 ``Model(args)``，前向为 ``forward(x) -> y_hat``。
+
+本文件只保留最简单的通用设定（不区分模型类型）：
+
+- 损失函数：``nn.MSELoss``
+- 优化器：``torch.optim.Adam``
+- 不涉及文本 embedding、检索知识库、相似度蒸馏损失
+
+训练/验证使用已知工况（``--data hlt`` 时按时间 7:2:1 划分）；测试阶段评估两个集合：
+已知工况测试集（``flag='test'``）与未知工况全集（``flag='unknown'``），指标为
+RMSE / MAE / R²（保留 4 位小数），并写入每个模型一个的 ``result_<model>.txt``。
+
+数据由 ``data_provider`` 提供，每个 batch 为 ``(x, y, _, _)``，``y`` 是下一时刻的目标值。
+模型的发现与加载见 ``exp/exp_basic.py``（参考 Time-Series-Library 的 exp_basic 设计）。
+"""
+
 import os
-from data_provider.data_factory import data_provider
-from exp.exp_basic import Exp_Basic
-from utils.tools import EarlyStopping, adjust_learning_rate
-from utils.metrics import metric
-from utils.cmLoss import cmLoss
+import time
+import warnings
+
+import numpy as np
 import torch
 import torch.nn as nn
 from torch import optim
-import time
-import warnings
-import numpy as np
-import pandas as pd
 
-from transformers import GPT2Tokenizer, GPT2Model
+from data_provider.data_factory import data_provider
+from exp.exp_basic import Exp_Basic
+from utils.metrics import metric, R2
+from utils.tools import EarlyStopping
 
 warnings.filterwarnings('ignore')
 
@@ -20,171 +37,80 @@ warnings.filterwarnings('ignore')
 class Exp_Soft_Sensor(Exp_Basic):
     def __init__(self, args):
         super(Exp_Soft_Sensor, self).__init__(args)
-        self.knowledge_base = self._load_kb()
-        self.text_emb = self._load_text_emb().to(self.device)
-        print("Knowledge Base and Text Embedding initialized.")
 
     def _build_model(self):
-        model = self.model_dict[self.args.model].Model(self.args, self.device).float()
+        # --model 指定 models/ 下的文件名，懒加载后返回 Model 类
+        model = self.model_dict[self.args.model](self.args).float()
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
         return model
 
-
-    def _load_kb(self):
-        knowledge_base = []
-        for path in self.args.historical_data_path:
-            full_path = os.path.join(self.args.root_path, path)
-            df = torch.tensor(pd.read_csv(full_path).values).float()
-            knowledge_base.append(df.to(self.device))  # 直接移动到设备
-        return knowledge_base
-
-    def _load_text_emb(self):
-        # 修正路径问题：确保相对于根目录
-        model_path = './models/gpt2'
-        tokenizer = GPT2Tokenizer.from_pretrained(model_path)
-        # model = GPT2Model.from_pretrained(model_path)
-
-        # === 修改点：将模型移动到计算设备 (GPU) ===
-        # model.to(self.device)
-        # =======================================
-
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-
-        with (torch.no_grad()):
-            token_ids = tokenizer(
-                self.args.text,
-                return_tensors="pt",
-                padding='max_length',
-                max_length=self.args.max_length,
-                truncation=True
-            ).input_ids.to(self.device)  # 这里数据已经在 GPU 了
-
-            # 现在模型和数据都在 GPU 上，可以正常运行
-            if hasattr(self.model, 'module'):
-                text_emb = self.model.module.gpt2.get_input_embeddings()(token_ids)
-            else:
-                text_emb = self.model.gpt2.get_input_embeddings()(token_ids)
-
-
-        return text_emb
-
     def _get_data(self, flag, vali_test=False):
         data_set, data_loader = data_provider(self.args, flag, vali_test)
-        first_sample = data_set[0]
-
-        # 3. 解析并打印
-        seq_x, seq_y, seq_x_mark, seq_y_mark = first_sample
-
-        print("--- 第一个样本详情 ---")
-        print(f"输入序列 (seq_x) 形状: {seq_x.shape}")
-        print(f"目标值 (seq_y) 形状: {seq_y.shape}")
-        print(f"seq_x 内容 (前5行):\n{seq_x[:5]}")
-        print(f"seq_y 内容: {seq_y}")
-        print(f"数据集总样本数: {len(data_set)}")
-
-
-
+        seq_x, seq_y, _, _ = data_set[0]
+        print(
+            f"[{flag}] samples={len(data_set)} | batches={len(data_loader)} | "
+            f"x={tuple(seq_x.shape)} y={tuple(seq_y.shape)}"
+        )
         return data_set, data_loader
 
     def _select_optimizer(self):
-        model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
-        return model_optim
+        return optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
 
     def _select_criterion(self):
-        criterion = cmLoss(self.args.task_loss,
-                           self.args.similarity_loss,
-                           self.args.task_w,
-                           self.args.similarity_w,
-                           self.args.temperature)
-        return criterion
-
-    def _select_vali_criterion(self):
-        criterion = nn.MSELoss()
-        return criterion
+        return nn.MSELoss()
 
     def train(self, setting):
         train_data, train_loader = self._get_data(flag='train')
         vali_data, vali_loader = self._get_data(flag='val')
 
-        if hasattr(self.model, 'module'):
-            text_emb = self.text_emb.expand(len(self.args.device_ids), -1, -1)
-        else:
-            text_emb = self.text_emb
-
         path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(path):
             os.makedirs(path)
 
-        time_now = time.time()
         train_steps = len(train_loader)
-
         early_stopping = EarlyStopping(patience=self.args.patience, verbose=True)
         model_optim = self._select_optimizer()
         criterion = self._select_criterion()
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optim, T_max=self.args.tmax, eta_min=1e-8)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            model_optim, T_max=self.args.tmax, eta_min=1e-8
+        )
 
         for epoch in range(self.args.train_epochs):
-            if hasattr(self.model, 'module'):
-                self.model.module.retriever.update_index(self.knowledge_base)
-            else:
-                self.model.retriever.update_index(self.knowledge_base)
             self.model.train()
 
-            iter_count = 0
             total_losses = []
-            task_losses = []
-            similarity_losses = []
-
             epoch_time = time.time()
 
             for i, (batch_x, batch_y, _, _) in enumerate(train_loader):
-                # print(batch_x)
-
-                iter_count += 1
-                model_optim.zero_grad()
-                # loss_optim.zero_grad()
+                model_optim.zero_grad(set_to_none=True)
 
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
 
-                outputs = self.model(batch_x, text_emb)
+                pred = self.model(batch_x)
+                loss = criterion(pred, batch_y)
 
-                total_loss, task_loss, similarity_loss = criterion(outputs, batch_y)
-                total_losses.append(total_loss.item())
-                task_losses.append(task_loss.item())
-                similarity_losses.append(similarity_loss.item())
-
-                # if (i + 1) % 25 == 0:
-                #     # print("top_n_similarity", outputs['top_n_similarity'])
-                #     # print("logit_scale", outputs['logit_scale'])
-                #     print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, total_loss.item()))
-                #     speed = (time.time() - time_now) / iter_count
-                #     left_time = speed * ((self.args.train_epochs - epoch) * train_steps - i)
-                #     print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
-                #     iter_count = 0
-                #     time_now = time.time()
-
-                total_loss.backward()
+                loss.backward()
                 model_optim.step()
-                # loss_optim.step()
 
-            print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
-            total_losses = np.average(total_losses)
-            task_losses = np.average(task_losses)
-            similarity_losses = np.average(similarity_losses)
+                total_losses.append(loss.item())
 
-            vali_loss = self.vali(vali_loader, self._select_vali_criterion())
+            train_loss = float(np.average(total_losses)) if total_losses else float('nan')
+            vali_loss = self.vali(vali_loader, criterion)
+            scheduler.step()
+
             print(
-                "Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Task Loss: {3:.7f} Similarity Loss: {4:.7f} Vali Loss: {5:.7f}".format(
-                    epoch + 1, train_steps, total_losses, task_losses, similarity_losses, vali_loss))
-
-            if self.args.cos:
-                scheduler.step()
-                print("lr = {:.10f}".format(model_optim.param_groups[0]['lr']))
-            else:
-                adjust_learning_rate(model_optim, epoch + 1, self.args)
+                "Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} "
+                "Lr: {4:.6f} | cost time: {5:.2f}s".format(
+                    epoch + 1,
+                    train_steps,
+                    train_loss,
+                    vali_loss,
+                    model_optim.param_groups[0]['lr'],
+                    time.time() - epoch_time,
+                )
+            )
 
             early_stopping(vali_loss, self.model, path)
             if early_stopping.early_stop:
@@ -193,83 +119,123 @@ class Exp_Soft_Sensor(Exp_Basic):
         return
 
     def vali(self, vali_loader, criterion):
-        total_loss = []
-        if hasattr(self.model, 'module'):
-            text_emb = self.text_emb.expand(len(self.args.device_ids), -1, -1)
-        else:
-            text_emb = self.text_emb
         self.model.eval()
+        total_loss = []
         with torch.no_grad():
-            for i, (batch_x, batch_y, _, _) in enumerate(vali_loader):
+            for batch_x, batch_y, _, _ in vali_loader:
                 batch_x = batch_x.float().to(self.device)
-                batch_y = batch_y.float()
+                batch_y = batch_y.float().to(self.device)
 
-                outputs = self.model(batch_x, text_emb)
-                outputs = outputs['output']
-
-                pred = outputs.detach().cpu()
-                true = batch_y.detach().cpu()
-                loss = criterion(pred, true)
-                total_loss.append(loss)
+                pred = self.model(batch_x)
+                total_loss.append(criterion(pred, batch_y).item())
 
         self.model.train()
-        total_loss = np.average(total_loss)
-        return total_loss
+        return float(np.average(total_loss)) if total_loss else float('inf')
 
     def test(self, setting, test=1):
-        test_data, test_loader = self._get_data(flag='test')
-        # knowledge_base = self._load_kb()
-        # knowledge_base = [df.to(self.device) for df in knowledge_base]
-        if hasattr(self.model, 'module'):
-            self.model.module.retriever.update_index(self.knowledge_base)
-        else:
-            self.model.retriever.update_index(self.knowledge_base)
+        # 已知工况测试集：已知工况 7:2:1 划分中的最后 10%
+        _, known_loader = self._get_data(flag='test')
+
+        # 未知工况测试集：全部 un_state* 数据；不支持的数据集（如 zero_shot）自动跳过
+        try:
+            _, unknown_loader = self._get_data(flag='unknown')
+        except (AssertionError, ValueError, KeyError) as exc:
+            print(f'未知工况集不可用（{exc}），本次只评估已知工况。')
+            unknown_loader = None
+
         if test:
-            print('loading model')
-            self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
+            checkpoint_path = os.path.join(self.args.checkpoints, setting, 'checkpoint.pth')
+            if not os.path.exists(checkpoint_path):
+                raise FileNotFoundError(
+                    f"找不到权重文件 {checkpoint_path}，请先训练或检查 setting 是否一致。"
+                )
+            print('loading model from', checkpoint_path)
+            state_dict = torch.load(checkpoint_path, map_location=self.device)
+            self.model.load_state_dict(state_dict)
+
+        known = self._evaluate(known_loader)
+        unknown = self._evaluate(unknown_loader)
+
+        self._report(setting, known, unknown)
+        return
+
+    # ------------------------------------------------------------ 测试辅助
+    def _evaluate(self, loader):
+        """在测试集上得到 ``{'preds', 'trues', 'metrics'}``；空集返回 None。"""
+        if loader is None or len(loader) == 0:
+            return None
 
         preds = []
         trues = []
 
         self.model.eval()
         with torch.no_grad():
-            for i, (batch_x, batch_y, _, _) in enumerate(test_loader):
+            for batch_x, batch_y, _, _ in loader:
                 batch_x = batch_x.float().to(self.device)
-                batch_y = batch_y.float().to(self.device)
+                preds.append(self.model(batch_x).detach().cpu().numpy())
+                trues.append(batch_y.detach().cpu().numpy())
 
-                outputs = self.model(batch_x, self.text_emb)
-                outputs = outputs['output']
+        preds = np.concatenate(preds, axis=0)
+        trues = np.concatenate(trues, axis=0)
+        return {'preds': preds, 'trues': trues, 'metrics': self._metrics(preds, trues)}
 
-                pred = outputs.detach().cpu().numpy()
-                true = batch_y.detach().cpu().numpy()
-                preds.append(pred)
-                trues.append(true)
-                # break
-                # print(pred)
-
-        preds = np.array(preds)
-        trues = np.array(trues)
-        print('test shape:', preds.shape, trues.shape)
-        preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
-        trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
-        print('test shape:', preds.shape, trues.shape)
-
-        # result save
-        folder_path = './results/' + setting + '/'
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-
+    @staticmethod
+    def _metrics(preds, trues):
         mae, mse, rmse, mape, mspe = metric(preds, trues)
-        print('rmse:{:.4f}, mae:{:.4f}'.format(rmse, mae))
-        f = open("result_soft_sensor.txt", 'a')
-        f.write(setting + "  \n")
-        f.write('rmse:{}, mae:{}'.format(rmse, mae))
-        f.write('\n')
-        f.write('\n')
-        f.close()
+        return {
+            'rmse': rmse,
+            'mae': mae,
+            'r2': R2(preds, trues),
+            'mse': mse,
+            'mape': mape,
+            'mspe': mspe,
+        }
 
-        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-        np.save(folder_path + 'pred.npy', preds)
-        np.save(folder_path + 'true.npy', trues)
+    def _report(self, setting, known, unknown):
+        """打印并按"每个模型一个 result 文件"的要求写入结果（保留 4 位小数）。"""
+        for name, result in (('known', known), ('unknown', unknown)):
+            if result is None:
+                print(f'[{name}] 无可用样本，跳过。')
+                continue
+            m = result['metrics']
+            print(
+                '[{:<8}] shape={} rmse={:.4f} mae={:.4f} r2={:.4f}'.format(
+                    name, result['preds'].shape, m['rmse'], m['mae'], m['r2']
+                )
+            )
+
+        # 每个模型一个结果文件：./result_<model>.txt，逐次运行追加
+        result_path = './result_{}.txt'.format(self.args.model)
+        lines = [setting]
+        if known is not None:
+            m = known['metrics']
+            lines.append(
+                '  known  : rmse={:.4f} mae={:.4f} r2={:.4f}'.format(
+                    m['rmse'], m['mae'], m['r2']
+                )
+            )
+        if unknown is not None:
+            m = unknown['metrics']
+            lines.append(
+                '  unknown: rmse={:.4f} mae={:.4f} r2={:.4f}'.format(
+                    m['rmse'], m['mae'], m['r2']
+                )
+            )
+        with open(result_path, 'a', encoding='utf-8') as f:
+            f.write('\n'.join(lines) + '\n\n')
+
+        # 预测值/指标按 setting 存盘，便于后续画图或复算
+        folder_path = './results/' + setting + '/'
+        os.makedirs(folder_path, exist_ok=True)
+        for name, result in (('known', known), ('unknown', unknown)):
+            if result is None:
+                continue
+            m = result['metrics']
+            np.save(folder_path + f'{name}_pred.npy', result['preds'])
+            np.save(folder_path + f'{name}_true.npy', result['trues'])
+            np.save(
+                folder_path + f'{name}_metrics.npy',
+                np.array([m['mae'], m['mse'], m['rmse'], m['r2']]),
+            )
 
         return

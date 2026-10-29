@@ -41,6 +41,7 @@ if __name__ == '__main__':
     parser.add_argument('--top_k', type=int, default=2, help='for TimesBlock')
     parser.add_argument('--enc_in', type=int, default=7, help='encoder input size')
     parser.add_argument('--d_model', type=int, default=768, help='dimension of model')
+    parser.add_argument('--e_layers', type=int, default=6, help='num of encoder layers')
     parser.add_argument('--n_heads', type=int, default=6, help='num of heads')
     parser.add_argument('--dropout', type=float, default=0.3, help='dropout')
     parser.add_argument('--ratio', type=float, default=0.5, help='ratio')

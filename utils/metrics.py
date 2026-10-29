@@ -37,6 +37,13 @@ def SMAPE(pred, true):
 def ND(pred, true):
     return np.mean(np.abs(true - pred)) / np.mean(np.abs(true))
 
+
+def R2(pred, true):
+    """决定系数 R²（越接近 1 越好）。"""
+    ss_res = np.sum((true - pred) ** 2)
+    ss_tot = np.sum((true - true.mean()) ** 2)
+    return float(1.0 - ss_res / (ss_tot + 1e-8))
+
 def metric(pred, true):
     mae = MAE(pred, true)
     mse = MSE(pred, true)

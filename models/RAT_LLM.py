@@ -7,9 +7,8 @@ from peft import LoraConfig, TaskType
 from peft import get_peft_model
 
 class Model(nn.Module):
-    def __init__(self, configs, device):
+    def __init__(self, configs):
         super(Model, self).__init__()
-        self.device = device
         self.top_n = configs.top_n
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 

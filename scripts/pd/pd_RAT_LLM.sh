@@ -1,7 +1,10 @@
+# 解释器：优先用环境变量 PYTHON，否则用 conda pytorch 环境的绝对路径
+PYTHON=${PYTHON:-"D:/Software/Anaconda3/envs/pytorch/python.exe"}
+
 seq_len=48
 model=RAT_LLM
 lr=0.0005
-python run.py \
+"$PYTHON" run.py \
     --root_path ./datasets/pd/ \
     --test_data_path un_state1.csv \
     --train_data_path state1.csv state2.csv state3.csv state4.csv state5.csv   \
