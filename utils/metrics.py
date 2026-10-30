@@ -45,10 +45,8 @@ def R2(pred, true):
     return float(1.0 - ss_res / (ss_tot + 1e-8))
 
 def metric(pred, true):
-    mae = MAE(pred, true)
-    mse = MSE(pred, true)
     rmse = RMSE(pred, true)
-    mape = MAPE(pred, true)
-    mspe = MSPE(pred, true)
+    mae = MAE(pred, true)
+    r2 = R2(pred, true)
 
-    return mae, mse, rmse, mape, mspe
+    return rmse, mae, r2

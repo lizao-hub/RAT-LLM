@@ -1,78 +1,38 @@
-from data_provider.data_loader import Dataset_zero_shot
+from data_provider.data_loader import Dataset_Custom, Dataset_Zero_shot
 from torch.utils.data import DataLoader, ConcatDataset
 
 data_dict = {
-    'zero_shot': Dataset_zero_shot,
-    # 'hlt': Dataset_hlt,
+    'custom': Dataset_Custom,       # 一个 CSV 按时间 7:1:2 切 train/val/test
+    'zero_shot': Dataset_Zero_shot,  # 一个 CSV 全部行都当测试集，只接受 flag='test'
 }
 
 
-def data_provider(args, flag, vali=False):
+def data_provider(args, flag):
     Data = data_dict[args.data]
-    if flag in ('test', 'unknown'):
-        shuffle_flag = False
-        drop_last = True
-        batch_size = 1
-    else:
-        shuffle_flag = True
-        drop_last = True
-        batch_size = args.batch_size  # bsz for train and valid
+    # timeenc = 0 if args.embed != 'timeF' else 1
 
-    train_data_path = args.train_data_path
-    if flag == 'train' or flag == 'val':
-        if getattr(Data, 'MULTI_FILE', False):
-            # 数据集自己管理多个文件（如 Dataset_hlt 的 state1~3），不要再按 data_path 循环
-            datasets = Data(
-                root_path=args.root_path,
-                flag=flag,
-                size=[args.seq_len, args.label_len, args.pred_len],
-                data_path=None,
-                target=args.target,
-            )
-            print(flag, len(datasets))
-            data_loader = DataLoader(
-                datasets,
-                batch_size=batch_size,
-                shuffle=shuffle_flag,
-                num_workers=args.num_workers,
-                drop_last=drop_last)
-            return datasets, data_loader
+    shuffle_flag = False if (flag == 'test' or flag == 'TEST') else True
+    drop_last = True if (flag == 'train' or flag == 'TRAIN') else False
+    batch_size = args.batch_size
+    # freq = args.freq
 
-        datasets = []
-        for data_path in train_data_path:
-            data_set = Data(
-                root_path=args.root_path,
-                flag=flag,
-                size=[args.seq_len, args.label_len, args.pred_len],
-                data_path=data_path,
-                target=args.target,
-            )
-            datasets.append(data_set)
-        datasets = ConcatDataset(datasets)
-        print(flag, len(datasets))
-
-        data_loader = DataLoader(
-            datasets,
-            batch_size=batch_size,
-            shuffle=shuffle_flag,
-            num_workers=args.num_workers,
-            drop_last=drop_last)
-        return datasets, data_loader
-
-    else:  # flag == 'test'（已知工况测试）或 'unknown'（未知工况测试）
+    data_sets = []
+    for data_path in args.data_path:
         data_set = Data(
             root_path=args.root_path,
+            data_path=data_path,
             flag=flag,
-            size=[args.seq_len, args.label_len, args.pred_len],
-            data_path=args.test_data_path,
+            size=[args.seq_len],
             target=args.target,
         )
-        print(flag, len(data_set))
-        data_loader = DataLoader(
-            data_set,
-            batch_size=batch_size,
-            shuffle=shuffle_flag,
-            num_workers=args.num_workers,
-            drop_last=drop_last)
-        return data_set, data_loader
+        data_sets.append(data_set)
 
+    data_sets = ConcatDataset(data_sets)
+    print(flag, len(data_sets))
+    data_loader = DataLoader(
+        data_sets,
+        batch_size=batch_size,
+        shuffle=shuffle_flag,
+        num_workers=args.num_workers,
+        drop_last=drop_last)
+    return data_sets, data_loader

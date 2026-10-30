@@ -1,6 +1,7 @@
 import argparse
 import os
 from exp.exp_soft_sensor import Exp_Soft_Sensor
+from exp.exp_zero_shot import Exp_Zero_Shot
 from utils.print_args import print_args
 import random
 import numpy as np
@@ -17,8 +18,7 @@ if __name__ == '__main__':
     # data loader
     parser.add_argument('--data', type=str, required=True, default='ETTm1', help='dataset type')
     parser.add_argument('--root_path', type=str, default='./data/ETT/', help='root path of the data file')
-    parser.add_argument('--test_data_path', type=str, default='ETTh1.csv', help='data file')
-    parser.add_argument('--train_data_path', type=str, nargs='+', default=['ETTh1.csv'], help='list of train data files')
+    parser.add_argument('--data_path', type=str, nargs='+', default=['ETTh1.csv'], help='list of train data files')
     parser.add_argument('--historical_data_path', type=str, nargs='+', default=['ETTh1.csv'], help='list of historical data files')
 
     parser.add_argument('--text', type=str, default='Zero-shot soft sensing')
@@ -110,6 +110,11 @@ if __name__ == '__main__':
 
     if args.task_name == 'soft_sensor':
         Exp = Exp_Soft_Sensor
+    elif args.task_name == 'zero_shot':
+        Exp = Exp_Zero_Shot
+        if args.is_training:
+            print('[WARN] task_name=zero_shot 只做测试，已忽略 --is_training 1')
+            args.is_training = 0
 
     if args.is_training:
         for ii in range(args.itr):
